@@ -352,7 +352,7 @@ static __inline int CLZ(int x)
 
 #else
 
-#ifdef __riscv
+#if defined(__riscv)
 
 typedef long long Word64;
 
@@ -363,7 +363,7 @@ static __inline int MULSHIFT32(int x, int y)
 	return result;
 }
 
-static __inline int FASTABS(int x) 
+static __inline int FASTABS(int x)
 {
 	int sign;
 
@@ -385,7 +385,7 @@ static __inline int CLZ(int x)
 	while (!(x & 0x80000000)) {
 		numZeros++;
 		x <<= 1;
-	} 
+	}
 
 	return numZeros;
 }
@@ -407,6 +407,57 @@ static __inline Word64 MADD64(Word64 sum, int a, int b)
 static __inline Word64 SHL64(Word64 x, int n)
 {
 	return (x<<n);
+}
+
+static __inline Word64 SAR64(Word64 x, int n)
+{
+	return (x >> n);
+}
+
+#elif defined(__xtensa__)
+
+typedef long long Word64;
+
+static __inline int MULSHIFT32(int x, int y)
+{
+	return (int)(((Word64)x * y) >> 32);
+}
+
+static __inline int FASTABS(int x)
+{
+	int sign;
+
+	sign = x >> (sizeof(int) * 8 - 1);
+	x ^= sign;
+	x -= sign;
+
+	return x;
+}
+
+static __inline int CLZ(int x)
+{
+	int numZeros;
+
+	if (!x)
+		return (sizeof(int) * 8);
+
+	numZeros = 0;
+	while (!(x & 0x80000000)) {
+		numZeros++;
+		x <<= 1;
+	}
+
+	return numZeros;
+}
+
+static __inline Word64 MADD64(Word64 sum, int a, int b)
+{
+	return sum + (Word64)a * (Word64)b;
+}
+
+static __inline Word64 SHL64(Word64 x, int n)
+{
+	return (x << n);
 }
 
 static __inline Word64 SAR64(Word64 x, int n)
