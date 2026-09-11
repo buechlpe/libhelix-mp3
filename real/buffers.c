@@ -50,6 +50,25 @@
 #include <string.h>
 #include "coder.h"
 
+/*
+ * Static decoder state placed in external PSRAM.  libhelix's default
+ * AllocateBuffers()/FreeBuffers() use malloc()/free(), which on ESP32-S3
+ * under Zephyr consume the small picolibc DRAM heap (typically ~22 KB) and
+ * fail because the decoder state needs roughly 27 KB.  Keeping the state in
+ * PSRAM makes initialization reliable while still allowing it to be cleared
+ * and reused across audio_start()/audio_stop() cycles.
+ */
+static MP3DecInfo s_mp3DecInfo __attribute__((section(".ext_ram.bss")));
+static FrameHeader s_frameHeader __attribute__((section(".ext_ram.bss")));
+static SideInfo s_sideInfo __attribute__((section(".ext_ram.bss")));
+static ScaleFactorInfo s_scaleFactorInfo __attribute__((section(".ext_ram.bss")));
+static HuffmanInfo s_huffmanInfo __attribute__((section(".ext_ram.bss")));
+static DequantInfo s_dequantInfo __attribute__((section(".ext_ram.bss")));
+static IMDCTInfo s_imdctInfo __attribute__((section(".ext_ram.bss")));
+static SubbandInfo s_subbandInfo __attribute__((section(".ext_ram.bss")));
+
+static int s_decoder_state_initialized = 0;
+
 /**************************************************************************************
  * Function:    ClearBuffer
  *
@@ -93,80 +112,62 @@ static void ClearBuffer(void *buf, int nBytes)
  **************************************************************************************/
 MP3DecInfo *AllocateBuffers(void)
 {
-	MP3DecInfo *mp3DecInfo;
-	FrameHeader *fh;
-	SideInfo *si;
-	ScaleFactorInfo *sfi;
-	HuffmanInfo *hi;
-	DequantInfo *di;
-	IMDCTInfo *mi;
-	SubbandInfo *sbi;
+	MP3DecInfo *mp3DecInfo = &s_mp3DecInfo;
 
-	mp3DecInfo = (MP3DecInfo *)malloc(sizeof(MP3DecInfo));
-	if (!mp3DecInfo)
-		return 0;
+	/* Always clear the state so that the DSP primitives see zeros on first use. */
 	ClearBuffer(mp3DecInfo, sizeof(MP3DecInfo));
-	
-	fh =  (FrameHeader *)     malloc(sizeof(FrameHeader));
-	si =  (SideInfo *)        malloc(sizeof(SideInfo));
-	sfi = (ScaleFactorInfo *) malloc(sizeof(ScaleFactorInfo));
-	hi =  (HuffmanInfo *)     malloc(sizeof(HuffmanInfo));
-	di =  (DequantInfo *)     malloc(sizeof(DequantInfo));
-	mi =  (IMDCTInfo *)       malloc(sizeof(IMDCTInfo));
-	sbi = (SubbandInfo *)     malloc(sizeof(SubbandInfo));
 
-	mp3DecInfo->FrameHeaderPS =     (void *)fh;
-	mp3DecInfo->SideInfoPS =        (void *)si;
-	mp3DecInfo->ScaleFactorInfoPS = (void *)sfi;
-	mp3DecInfo->HuffmanInfoPS =     (void *)hi;
-	mp3DecInfo->DequantInfoPS =     (void *)di;
-	mp3DecInfo->IMDCTInfoPS =       (void *)mi;
-	mp3DecInfo->SubbandInfoPS =     (void *)sbi;
-
-	if (!fh || !si || !sfi || !hi || !di || !mi || !sbi) {
-		FreeBuffers(mp3DecInfo);	/* safe to call - only frees memory that was successfully allocated */
-		return 0;
+	if (!s_decoder_state_initialized) {
+		mp3DecInfo->FrameHeaderPS =     (void *)&s_frameHeader;
+		mp3DecInfo->SideInfoPS =        (void *)&s_sideInfo;
+		mp3DecInfo->ScaleFactorInfoPS = (void *)&s_scaleFactorInfo;
+		mp3DecInfo->HuffmanInfoPS =     (void *)&s_huffmanInfo;
+		mp3DecInfo->DequantInfoPS =     (void *)&s_dequantInfo;
+		mp3DecInfo->IMDCTInfoPS =       (void *)&s_imdctInfo;
+		mp3DecInfo->SubbandInfoPS =     (void *)&s_subbandInfo;
+		s_decoder_state_initialized = 1;
 	}
 
-	/* important to do this - DSP primitives assume a bunch of state variables are 0 on first use */
-	ClearBuffer(fh,  sizeof(FrameHeader));
-	ClearBuffer(si,  sizeof(SideInfo));
-	ClearBuffer(sfi, sizeof(ScaleFactorInfo));
-	ClearBuffer(hi,  sizeof(HuffmanInfo));
-	ClearBuffer(di,  sizeof(DequantInfo));
-	ClearBuffer(mi,  sizeof(IMDCTInfo));
-	ClearBuffer(sbi, sizeof(SubbandInfo));
+	ClearBuffer(mp3DecInfo->FrameHeaderPS,     sizeof(FrameHeader));
+	ClearBuffer(mp3DecInfo->SideInfoPS,        sizeof(SideInfo));
+	ClearBuffer(mp3DecInfo->ScaleFactorInfoPS, sizeof(ScaleFactorInfo));
+	ClearBuffer(mp3DecInfo->HuffmanInfoPS,     sizeof(HuffmanInfo));
+	ClearBuffer(mp3DecInfo->DequantInfoPS,     sizeof(DequantInfo));
+	ClearBuffer(mp3DecInfo->IMDCTInfoPS,       sizeof(IMDCTInfo));
+	ClearBuffer(mp3DecInfo->SubbandInfoPS,     sizeof(SubbandInfo));
 
 	return mp3DecInfo;
 }
 
-#define SAFE_FREE(x)	{if (x)	free(x);	(x) = 0;}	/* helper macro */
-
 /**************************************************************************************
  * Function:    FreeBuffers
  *
- * Description: frees all the memory used by the MP3 decoder
+ * Description: clears the static decoder state so it can be reused later
  *
- * Inputs:      pointer to initialized MP3DecInfo structure
+ * Inputs:      pointer to initialized MP3DecInfo structure (ignored)
  *
  * Outputs:     none
  *
  * Return:      none
  *
- * Notes:       safe to call even if some buffers were not allocated (uses SAFE_FREE)
+ * Notes:       safe to call even if mp3DecInfo is NULL; state lives in PSRAM
  **************************************************************************************/
 void FreeBuffers(MP3DecInfo *mp3DecInfo)
 {
-	if (!mp3DecInfo)
+	(void)mp3DecInfo;
+
+	if (!s_decoder_state_initialized) {
 		return;
+	}
 
-	SAFE_FREE(mp3DecInfo->FrameHeaderPS);
-	SAFE_FREE(mp3DecInfo->SideInfoPS);
-	SAFE_FREE(mp3DecInfo->ScaleFactorInfoPS);
-	SAFE_FREE(mp3DecInfo->HuffmanInfoPS);
-	SAFE_FREE(mp3DecInfo->DequantInfoPS);
-	SAFE_FREE(mp3DecInfo->IMDCTInfoPS);
-	SAFE_FREE(mp3DecInfo->SubbandInfoPS);
+	ClearBuffer(&s_mp3DecInfo,       sizeof(s_mp3DecInfo));
+	ClearBuffer(&s_frameHeader,      sizeof(s_frameHeader));
+	ClearBuffer(&s_sideInfo,         sizeof(s_sideInfo));
+	ClearBuffer(&s_scaleFactorInfo,  sizeof(s_scaleFactorInfo));
+	ClearBuffer(&s_huffmanInfo,      sizeof(s_huffmanInfo));
+	ClearBuffer(&s_dequantInfo,      sizeof(s_dequantInfo));
+	ClearBuffer(&s_imdctInfo,        sizeof(s_imdctInfo));
+	ClearBuffer(&s_subbandInfo,      sizeof(s_subbandInfo));
 
-	SAFE_FREE(mp3DecInfo);
+	s_decoder_state_initialized = 0;
 }
