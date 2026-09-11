@@ -49,23 +49,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include "coder.h"
+#include "app_memory.h"
 
 /*
- * Static decoder state placed in external PSRAM.  libhelix's default
- * AllocateBuffers()/FreeBuffers() use malloc()/free(), which on ESP32-S3
+ * Static decoder state placed in external PSRAM when SPIRAM is available.
+ * libhelix's default AllocateBuffers()/FreeBuffers() use malloc()/free(),
+ * which on ESP32-S3
  * under Zephyr consume the small picolibc DRAM heap (typically ~22 KB) and
  * fail because the decoder state needs roughly 27 KB.  Keeping the state in
  * PSRAM makes initialization reliable while still allowing it to be cleared
  * and reused across audio_start()/audio_stop() cycles.
  */
-static MP3DecInfo s_mp3DecInfo __attribute__((section(".ext_ram.bss")));
-static FrameHeader s_frameHeader __attribute__((section(".ext_ram.bss")));
-static SideInfo s_sideInfo __attribute__((section(".ext_ram.bss")));
-static ScaleFactorInfo s_scaleFactorInfo __attribute__((section(".ext_ram.bss")));
-static HuffmanInfo s_huffmanInfo __attribute__((section(".ext_ram.bss")));
-static DequantInfo s_dequantInfo __attribute__((section(".ext_ram.bss")));
-static IMDCTInfo s_imdctInfo __attribute__((section(".ext_ram.bss")));
-static SubbandInfo s_subbandInfo __attribute__((section(".ext_ram.bss")));
+static MP3DecInfo s_mp3DecInfo APP_PSRAM_SECTION;
+static FrameHeader s_frameHeader APP_PSRAM_SECTION;
+static SideInfo s_sideInfo APP_PSRAM_SECTION;
+static ScaleFactorInfo s_scaleFactorInfo APP_PSRAM_SECTION;
+static HuffmanInfo s_huffmanInfo APP_PSRAM_SECTION;
+static DequantInfo s_dequantInfo APP_PSRAM_SECTION;
+static IMDCTInfo s_imdctInfo APP_PSRAM_SECTION;
+static SubbandInfo s_subbandInfo APP_PSRAM_SECTION;
 
 static int s_decoder_state_initialized = 0;
 
